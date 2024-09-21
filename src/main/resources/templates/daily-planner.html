@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planifikuesi Ditor</title>
+    <link rel="stylesheet" href="/css/daily-planner-styles.css">
+</head>
+<body>
+<header>
+    <h1>Planifikuesi Ditor</h1>
+</header>
+
+<form action="#" th:action="@{/save-planner}" th:object="${dailyPlanner}" method="post">
+    <div class="date-picker">
+        <label for="selected-date">Zgjidh Datën:</label>
+        <input type="date" id="selected-date" th:field="*{date}" onchange="fetchData(this.value)" />
+    </div>
+
+    <section class="gratitude-section">
+        <h3>Mirënjohje për:</h3>
+        <input type="text" th:field="*{gratitude1}" placeholder="1." />
+        <input type="text" th:field="*{gratitude2}" placeholder="2." />
+        <input type="text" th:field="*{gratitude3}" placeholder="3." />
+    </section>
+
+    <section class="goal-section">
+        <h3>Qëllimi i Ditës:</h3>
+        <input type="text" th:field="*{goal}" placeholder="Shkruaj qëllimin e ditës" />
+    </section>
+
+    <section class="tasks-section">
+        <h3>Për të Bërë:</h3>
+        <ul id="task-list">
+            <li>
+                <input type="text" class="task-text" placeholder="Shkruaj detyrën" />
+                <input type="checkbox" class="task-done" />
+            </li>
+        </ul>
+        <button type="button" id="add-task-btn">Shto Detyrë</button>
+    </section>
+
+    <section class="notes-section">
+        <h3>Shënime:</h3>
+        <textarea th:field="*{notes}" rows="4" placeholder="Shkruaj shënime..."></textarea>
+    </section>
+
+    <section class="tracking-section">
+        <h3>Vlerësimi i Ditës:</h3>
+        <div>
+            <label>Humor:</label>
+            <select th:field="*{mood}">
+                <option value="happy">😊 I lumtur</option>
+                <option value="neutral">😐 Normal</option>
+                <option value="sad">😔 I trishtuar</option>
+            </select>
+        </div>
+
+        <div class="water-section">
+            <label for="water-cups">Gota Uji:</label>
+            <input type="number" id="water-cups" th:field="*{waterCups}" min="0" value="0" />
+            <div id="water-icons"></div>
+        </div>
+
+        <div class="sleep-section">
+            <label for="sleep-hours">Orë Gjumë:</label>
+            <input type="number" id="sleep-hours" th:field="*{sleepHours}" min="0" max="16" value="0" />
+            <div id="sleep-icons"></div>
+        </div>
+    </section>
+
+    <button type="submit">Ruaj</button>
+</form>
+
+<script src="/js/daily-planner.js"></script>
+
+<script>
+    function fetchData(selectedDate) {
+        fetch(`/get-planner/${selectedDate}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data) {
+                    document.querySelector('[th\\:field="*{date}"]').value = data.date;
+                    document.querySelector('[th\\:field="*{gratitude1}"]').value = data.gratitude1 || '';
+                    document.querySelector('[th\\:field="*{gratitude2}"]').value = data.gratitude2 || '';
+                    document.querySelector('[th\\:field="*{gratitude3}"]').value = data.gratitude3 || '';
+                    document.querySelector('[th\\:field="*{goal}"]').value = data.goal || '';
+                    document.querySelector('[th\\:field="*{notes}"]').value = data.notes || '';
+                    document.querySelector('[th\\:field="*{mood}"]').value = data.mood || '';
+                    document.querySelector('[th\\:field="*{waterCups}"]').value = data.waterCups || 0;
+                    document.querySelector('[th\\:field="*{sleepHours}"]').value = data.sleepHours || 0;
+                } else {
+                    document.querySelector('[th\\:field="*{date}"]').value = selectedDate;
+                }
+            });
+    }
+</script>
+</body>
+</html>

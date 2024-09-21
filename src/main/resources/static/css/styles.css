@@ -1,0 +1,26 @@
+.container {
+    text-align: center;
+    margin: 50px;
+}
+
+.logo {
+    max-width: 200px; /* Përshtat madhësinë e logos sipas nevojës */
+}
+
+.auth-buttons {
+    margin-top: 20px;
+}
+
+.btn {
+    display: inline-block;
+    padding: 10px 20px;
+    margin: 5px;
+    background-color: #4CAF50; /* Ngjyrë e gjelbër */
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+}
+
+.btn:hover {
+    background-color: #45a049; /* Ngjyrë e errët në hover */
+}

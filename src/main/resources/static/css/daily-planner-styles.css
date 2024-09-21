@@ -1,0 +1,128 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f4f4f4;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #2e8b57;
+    color: white;
+    padding: 10px;
+    margin-bottom: 20px;
+}
+
+section {
+    background-color: white;
+    border-radius: 5px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+h3 {
+    margin-top: 0;
+}
+
+input[type="text"],
+input[type="number"],
+textarea {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+li {
+    margin: 10px 0;
+}
+
+button {
+    background-color: #2e8b57;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #256647;
+}
+.tasks-section input[type="text"] {
+    width: calc(100% - 40px);
+    padding: 5px;
+    margin-right: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+#add-task-btn {
+    background-color: #2e8b57;
+    color: white;
+    padding: 8px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+#add-task-btn:hover {
+    background-color: #256647;
+}
+
+.date-picker {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+}
+
+.date-picker label {
+    font-size: 16px;
+    margin-bottom: 8px;
+    color: #2e8b57;
+    font-weight: bold;
+}
+
+#selected-date {
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    font-size: 16px;
+    background-color: #f9f9f9;
+    color: #333;
+    width: 200px;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+#selected-date:focus {
+    border-color: #2e8b57;
+    box-shadow: 0 0 10px rgba(46, 139, 87, 0.2);
+}
+
+#selected-date::-webkit-calendar-picker-indicator {
+    background-color: #2e8b57;
+    padding: 5px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+#water-icons img, #sleep-icons img {
+    width: 30px;
+    height: 30px;
+    margin: 5px;
+}
+
+.water-section, .sleep-section {
+    margin-bottom: 20px;
+}
