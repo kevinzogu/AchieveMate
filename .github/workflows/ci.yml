@@ -158,12 +158,12 @@ jobs:
             --arg sonar_loc      "$SONAR_LOC" \
             --arg sonar_url      "$SONAR_URL" \
             '{
-              project_name:        $project_name,
-              branch_name:         $branch_name,
-              build_status:        $build_status,
+              project:        $project_name,
+              branch:         $branch_name,
+              ci_status:        $build_status,
               commit_sha:          $commit_sha,
               commit_message:      $commit_msg,
-              triggered_by:        $triggered_by,
+              user:        $triggered_by,
               sonar_status:        $sonar_status,
               sonar_bugs:          $sonar_bugs,
               sonar_vulnerabilities:$sonar_vuln,
