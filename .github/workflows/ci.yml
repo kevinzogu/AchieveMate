@@ -1,0 +1,411 @@
+name: PAM GPI LOTTERY CI
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for better analysis
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Build and Test with Maven
+        run: |
+          echo "Building project..."
+          mvn clean compile test-compile
+          
+          echo "Running tests..."
+          mvn test
+          
+          echo "Creating test reports..."
+          mvn jacoco:report
+
+      - name: Run SonarCloud Analysis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          echo "Running SonarCloud analysis..."
+          mvn sonar:sonar \
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+
+      - name: Build Docker Image (if needed)
+        if: success()
+        run: |
+          echo "Building Docker image..."
+          # Add your docker build commands here if needed
+          # docker build -t your-image:${{ github.sha }} .
+
+  slack-notify:
+    needs: build-and-analyze
+    runs-on: ubuntu-latest
+    if: always()  # Run even if build fails
+    steps:
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh &> /dev/null; then
+            echo "Installing GitHub CLI..."
+            sudo apt update && sudo apt install -y gh
+          fi
+
+      - name: Get GitHub user info
+        id: user-info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LOGIN: ${{ github.actor }}
+        run: |
+          FULL_NAME=$(gh api users/$LOGIN --jq '.name // ""')
+          DISPLAY_NAME=${FULL_NAME:-$LOGIN}
+          echo "display_name=$DISPLAY_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for SonarCloud Analysis
+        run: |
+          echo "Waiting for SonarCloud analysis to complete..."
+          sleep 30  # Give SonarCloud time to process the analysis
+
+      - name: Get SonarCloud Results
+        id: sonar-results
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          echo "Fetching SonarCloud analysis results..."
+          
+          # Function to make API calls with retry
+          make_api_call() {
+            local url="$1"
+            local max_retries=3
+            local retry_count=0
+            
+            while [ $retry_count -lt $max_retries ]; do
+              response=$(curl -s -u "$SONAR_TOKEN:" "$url")
+              if [ $? -eq 0 ] && [ -n "$response" ]; then
+                echo "$response"
+                return 0
+              fi
+              retry_count=$((retry_count + 1))
+              echo "API call failed, retrying... ($retry_count/$max_retries)" >&2
+              sleep 5
+            done
+            
+            echo "API call failed after $max_retries retries" >&2
+            return 1
+          }
+          
+          # Get Quality Gate Status
+          echo "Getting quality gate status..."
+          QUALITY_GATE_RESPONSE=$(make_api_call "https://sonarcloud.io/api/qualitygates/project_status?projectKey=$SONAR_PROJECT_KEY")
+          
+          if [ $? -eq 0 ]; then
+            PROJECT_STATUS=$(echo "$QUALITY_GATE_RESPONSE" | jq -r '.projectStatus.status // "UNKNOWN"')
+            echo "Quality Gate Status: $PROJECT_STATUS"
+          else
+            PROJECT_STATUS="UNKNOWN"
+            echo "Failed to get quality gate status"
+          fi
+          
+          # Get Project Measures
+          echo "Getting project measures..."
+          MEASURES_RESPONSE=$(make_api_call "https://sonarcloud.io/api/measures/component?component=$SONAR_PROJECT_KEY&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,reliability_rating,security_rating,sqale_rating,ncloc,lines")
+          
+          if [ $? -eq 0 ]; then
+            MEASURES=$(echo "$MEASURES_RESPONSE" | jq -r '.component.measures // []')
+            
+            # Extract metrics
+            BUGS=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="bugs") | .value // "0"')
+            VULNERABILITIES=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="vulnerabilities") | .value // "0"')
+            CODE_SMELLS=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="code_smells") | .value // "0"')
+            COVERAGE=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="coverage") | .value // "0"')
+            DUPLICATED_LINES=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="duplicated_lines_density") | .value // "0"')
+            RELIABILITY_RATING=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="reliability_rating") | .value // "1"')
+            SECURITY_RATING=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="security_rating") | .value // "1"')
+            MAINTAINABILITY_RATING=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="sqale_rating") | .value // "1"')
+            LINES_OF_CODE=$(echo "$MEASURES" | jq -r '.[] | select(.metric=="ncloc") | .value // "0"')
+            
+            echo "Metrics retrieved successfully"
+          else
+            echo "Failed to get project measures, using defaults"
+            BUGS="N/A"
+            VULNERABILITIES="N/A"
+            CODE_SMELLS="N/A"
+            COVERAGE="N/A"
+            DUPLICATED_LINES="N/A"
+            RELIABILITY_RATING="N/A"
+            SECURITY_RATING="N/A"
+            MAINTAINABILITY_RATING="N/A"
+            LINES_OF_CODE="N/A"
+          fi
+          
+          # Convert ratings to grades
+          convert_rating() {
+            case $1 in
+              "1") echo "A" ;;
+              "2") echo "B" ;;
+              "3") echo "C" ;;
+              "4") echo "D" ;;
+              "5") echo "E" ;;
+              *) echo "N/A" ;;
+            esac
+          }
+          
+          RELIABILITY_GRADE=$(convert_rating "$RELIABILITY_RATING")
+          SECURITY_GRADE=$(convert_rating "$SECURITY_RATING")
+          MAINTAINABILITY_GRADE=$(convert_rating "$MAINTAINABILITY_RATING")
+          
+          # Create SonarCloud URL
+          SONAR_URL="https://sonarcloud.io/summary/new_code?id=$SONAR_PROJECT_KEY"
+          
+          # Output results
+          echo "project_status=$PROJECT_STATUS" >> "$GITHUB_OUTPUT"
+          echo "bugs=$BUGS" >> "$GITHUB_OUTPUT"
+          echo "vulnerabilities=$VULNERABILITIES" >> "$GITHUB_OUTPUT"
+          echo "code_smells=$CODE_SMELLS" >> "$GITHUB_OUTPUT"
+          echo "coverage=$COVERAGE" >> "$GITHUB_OUTPUT"
+          echo "duplicated_lines=$DUPLICATED_LINES" >> "$GITHUB_OUTPUT"
+          echo "reliability_grade=$RELIABILITY_GRADE" >> "$GITHUB_OUTPUT"
+          echo "security_grade=$SECURITY_GRADE" >> "$GITHUB_OUTPUT"
+          echo "maintainability_grade=$MAINTAINABILITY_GRADE" >> "$GITHUB_OUTPUT"
+          echo "lines_of_code=$LINES_OF_CODE" >> "$GITHUB_OUTPUT"
+          echo "sonar_url=$SONAR_URL" >> "$GITHUB_OUTPUT"
+          
+          echo "=== SonarCloud Analysis Results ==="
+          echo "Quality Gate: $PROJECT_STATUS"
+          echo "Bugs: $BUGS"
+          echo "Vulnerabilities: $VULNERABILITIES"
+          echo "Code Smells: $CODE_SMELLS"
+          echo "Coverage: $COVERAGE%"
+          echo "Duplicated Lines: $DUPLICATED_LINES%"
+          echo "Lines of Code: $LINES_OF_CODE"
+          echo "Reliability: $RELIABILITY_GRADE"
+          echo "Security: $SECURITY_GRADE"
+          echo "Maintainability: $MAINTAINABILITY_GRADE"
+          echo "================================="
+
+      - name: Send Slack Notification
+        env:
+          WEBHOOK_URL: ${{ secrets.SLACK_TRIGGER_URL }}
+          PROJECT_NAME: ${{ github.event.repository.name }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          USER_NAME: ${{ steps.user-info.outputs.display_name }}
+          BUILD_STATUS: ${{ needs.build-and-analyze.result }}
+          CI_LINK: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          # SonarCloud Results
+          SONAR_STATUS: ${{ steps.sonar-results.outputs.project_status }}
+          SONAR_BUGS: ${{ steps.sonar-results.outputs.bugs }}
+          SONAR_VULNERABILITIES: ${{ steps.sonar-results.outputs.vulnerabilities }}
+          SONAR_CODE_SMELLS: ${{ steps.sonar-results.outputs.code_smells }}
+          SONAR_COVERAGE: ${{ steps.sonar-results.outputs.coverage }}
+          SONAR_DUPLICATED_LINES: ${{ steps.sonar-results.outputs.duplicated_lines }}
+          SONAR_RELIABILITY: ${{ steps.sonar-results.outputs.reliability_grade }}
+          SONAR_SECURITY: ${{ steps.sonar-results.outputs.security_grade }}
+          SONAR_MAINTAINABILITY: ${{ steps.sonar-results.outputs.maintainability_grade }}
+          SONAR_LINES_OF_CODE: ${{ steps.sonar-results.outputs.lines_of_code }}
+          SONAR_URL: ${{ steps.sonar-results.outputs.sonar_url }}
+        run: |
+          echo "Preparing Slack notification..."
+          
+          # Determine build status emoji
+          if [ "$BUILD_STATUS" = "success" ]; then
+            BUILD_EMOJI="✅"
+            BUILD_COLOR="good"
+          elif [ "$BUILD_STATUS" = "failure" ]; then
+            BUILD_EMOJI="❌"
+            BUILD_COLOR="danger"
+          else
+            BUILD_EMOJI="⚠️"
+            BUILD_COLOR="warning"
+          fi
+          
+          # Determine SonarCloud quality gate emoji
+          if [ "$SONAR_STATUS" = "OK" ]; then
+            SONAR_EMOJI="✅"
+            SONAR_COLOR="good"
+          elif [ "$SONAR_STATUS" = "ERROR" ]; then
+            SONAR_EMOJI="❌"
+            SONAR_COLOR="danger"
+          else
+            SONAR_EMOJI="⚠️"
+            SONAR_COLOR="warning"
+          fi
+          
+          # Determine coverage emoji
+          if [ "$SONAR_COVERAGE" != "N/A" ] && [ "$SONAR_COVERAGE" != "0" ]; then
+            COVERAGE_NUM=$(echo "$SONAR_COVERAGE" | cut -d'.' -f1)
+            if [ "$COVERAGE_NUM" -ge 80 ]; then
+              COVERAGE_EMOJI="🟢"
+            elif [ "$COVERAGE_NUM" -ge 60 ]; then
+              COVERAGE_EMOJI="🟡"
+            else
+              COVERAGE_EMOJI="🔴"
+            fi
+          else
+            COVERAGE_EMOJI="⚪"
+          fi
+          
+          # Truncate commit message if too long
+          COMMIT_MSG_SHORT=$(echo "$COMMIT_MESSAGE" | head -c 100)
+          if [ ${#COMMIT_MESSAGE} -gt 100 ]; then
+            COMMIT_MSG_SHORT="${COMMIT_MSG_SHORT}..."
+          fi
+          
+          # Create comprehensive Slack payload
+          PAYLOAD=$(jq -n \
+            --arg project "$PROJECT_NAME" \
+            --arg branch "$BRANCH_NAME" \
+            --arg user "$USER_NAME" \
+            --arg build_status "$BUILD_STATUS" \
+            --arg build_emoji "$BUILD_EMOJI" \
+            --arg build_color "$BUILD_COLOR" \
+            --arg ci_link "$CI_LINK" \
+            --arg commit_sha "${COMMIT_SHA:0:7}" \
+            --arg commit_message "$COMMIT_MSG_SHORT" \
+            --arg sonar_status "$SONAR_STATUS" \
+            --arg sonar_emoji "$SONAR_EMOJI" \
+            --arg sonar_color "$SONAR_COLOR" \
+            --arg sonar_bugs "$SONAR_BUGS" \
+            --arg sonar_vulnerabilities "$SONAR_VULNERABILITIES" \
+            --arg sonar_code_smells "$SONAR_CODE_SMELLS" \
+            --arg sonar_coverage "$SONAR_COVERAGE" \
+            --arg coverage_emoji "$COVERAGE_EMOJI" \
+            --arg sonar_duplicated_lines "$SONAR_DUPLICATED_LINES" \
+            --arg sonar_reliability "$SONAR_RELIABILITY" \
+            --arg sonar_security "$SONAR_SECURITY" \
+            --arg sonar_maintainability "$SONAR_MAINTAINABILITY" \
+            --arg sonar_lines_of_code "$SONAR_LINES_OF_CODE" \
+            --arg sonar_url "$SONAR_URL" \
+            '{
+              text: ("CI/CD Pipeline Complete for " + $project),
+              attachments: [
+                {
+                  color: $build_color,
+                  title: ($build_emoji + " Build Status: " + $build_status),
+                  title_link: $ci_link,
+                  fields: [
+                    {
+                      title: "Project",
+                      value: $project,
+                      short: true
+                    },
+                    {
+                      title: "Branch",
+                      value: $branch,
+                      short: true
+                    },
+                    {
+                      title: "Triggered by",
+                      value: $user,
+                      short: true
+                    },
+                    {
+                      title: "Commit",
+                      value: ($commit_sha + ": " + $commit_message),
+                      short: false
+                    }
+                  ],
+                  footer: "GitHub Actions",
+                  ts: (now | floor)
+                },
+                {
+                  color: $sonar_color,
+                  title: ($sonar_emoji + " SonarCloud Quality Gate: " + $sonar_status),
+                  title_link: $sonar_url,
+                  fields: [
+                    {
+                      title: "🐛 Bugs",
+                      value: $sonar_bugs,
+                      short: true
+                    },
+                    {
+                      title: "🔒 Vulnerabilities",
+                      value: $sonar_vulnerabilities,
+                      short: true
+                    },
+                    {
+                      title: "👃 Code Smells",
+                      value: $sonar_code_smells,
+                      short: true
+                    },
+                    {
+                      title: ("📊 Coverage " + $coverage_emoji),
+                      value: ($sonar_coverage + "%"),
+                      short: true
+                    },
+                    {
+                      title: "📋 Duplicated Lines",
+                      value: ($sonar_duplicated_lines + "%"),
+                      short: true
+                    },
+                    {
+                      title: "📏 Lines of Code",
+                      value: $sonar_lines_of_code,
+                      short: true
+                    },
+                    {
+                      title: "🔧 Reliability",
+                      value: $sonar_reliability,
+                      short: true
+                    },
+                    {
+                      title: "🛡️ Security",
+                      value: $sonar_security,
+                      short: true
+                    },
+                    {
+                      title: "⚙️ Maintainability",
+                      value: $sonar_maintainability,
+                      short: true
+                    }
+                  ],
+                  footer: "SonarCloud Analysis",
+                  ts: (now | floor)
+                }
+              ]
+            }')
+          
+          echo "Sending Slack notification..."
+          echo "Payload preview:"
+          echo "$PAYLOAD" | jq '.'
+          
+          # Send to Slack
+          curl -X POST \
+            -H 'Content-type: application/json' \
+            --data "$PAYLOAD" \
+            "$WEBHOOK_URL"
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Slack notification sent successfully!"
+          else
+            echo "❌ Failed to send Slack notification"
+          fi
